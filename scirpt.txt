@@ -459,3 +459,248 @@ ScriptsTab:CreateButton({
        })
    end,
 })
+
+local RPGFunctions = Window:CreateTab("RPG Control", "sword") -- Using sword icon
+
+local RPGCameraEnabled = false
+local CurrentRocket = nil
+local OriginalCameraCF = nil
+local OriginalCameraType = nil
+local RocketCheckInterval = 1 -- Check every 1 second
+local LastCheckTime = 0
+local RocketControlConnection = nil
+local RocketCheckThread = nil
+
+local function FindRocket()
+    -- Check multiple possible locations for the rocket
+    local locationsToCheck = {
+        workspace.Debris.VParts,
+        workspace.Debris,
+        workspace
+    }
+    
+    for _, location in ipairs(locationsToCheck) do
+        if location and location:FindFirstChild("RPG_Rocket") then
+            return location.RPG_Rocket
+        end
+        
+        -- Also check all children
+        for _, obj in ipairs(location:GetChildren()) do
+            if obj.Name == "RPG_Rocket" then
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+local function AttachCameraToRocket(rocket)
+    if not rocket or not rocket.Parent then return end
+    
+    -- Disconnect previous controls
+    if RocketControlConnection then
+        RocketControlConnection:Disconnect()
+        RocketControlConnection = nil
+    end
+    
+    CurrentRocket = rocket
+    OriginalCameraCF = workspace.CurrentCamera.CFrame
+    OriginalCameraType = workspace.CurrentCamera.CameraType
+    
+    workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+    RPGCameraEnabled = true
+    
+    -- Create BodyForce if it doesn't exist
+    local bodyForce = rocket:FindFirstChild("BodyForce")
+    if not bodyForce then
+        bodyForce = Instance.new("BodyForce")
+        bodyForce.Name = "BodyForce"
+        bodyForce.Parent = rocket
+    end
+    
+    -- Set initial speed
+    bodyForce.Force = Vector3.new(0, 0, 0)
+    
+    RocketControlConnection = game:GetService("RunService").RenderStepped:Connect(function()
+        if not RPGCameraEnabled or not rocket or not rocket.Parent then
+            if RocketControlConnection then
+                RocketControlConnection:Disconnect()
+                RocketControlConnection = nil
+            end
+            return
+        end
+        
+        -- Update camera position
+        workspace.CurrentCamera.CFrame = CFrame.new(rocket.Position, rocket.Position + rocket.CFrame.LookVector)
+        
+        -- Rocket controls
+        local moveDirection = Vector3.new(0, 0, 0)
+        local speed = RPGFunctions:GetValue("RPGSpeed") or 50
+        
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.W) then
+            moveDirection = moveDirection + rocket.CFrame.LookVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.S) then
+            moveDirection = moveDirection - rocket.CFrame.LookVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.A) then
+            moveDirection = moveDirection - rocket.CFrame.RightVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.D) then
+            moveDirection = moveDirection + rocket.CFrame.RightVector
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.Space) then
+            moveDirection = moveDirection + Vector3.new(0, 1, 0)
+        end
+        if game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode.LeftShift) then
+            moveDirection = moveDirection + Vector3.new(0, -1, 0)
+        end
+        
+        if moveDirection.Magnitude > 0 then
+            bodyForce.Force = moveDirection.Unit * speed
+        else
+            bodyForce.Force = Vector3.new(0, 0, 0)
+        end
+    end)
+    
+    -- Track rocket destruction
+    local ancestryConnection
+    ancestryConnection = rocket.AncestryChanged:Connect(function()
+        if not rocket.Parent then
+            ancestryConnection:Disconnect()
+            ResetCamera()
+        end
+    end)
+end
+
+local function ResetCamera()
+    RPGCameraEnabled = false
+    if RocketControlConnection then
+        RocketControlConnection:Disconnect()
+        RocketControlConnection = nil
+    end
+    if workspace.CurrentCamera then
+        workspace.CurrentCamera.CameraType = OriginalCameraType or Enum.CameraType.Custom
+        if OriginalCameraCF then
+            workspace.CurrentCamera.CFrame = OriginalCameraCF
+        end
+    end
+    CurrentRocket = nil
+end
+
+-- Function for periodic checking
+local function CheckForRocket()
+    while RPGCameraEnabled do
+        local currentTime = tick()
+        if currentTime - LastCheckTime >= RocketCheckInterval then
+            LastCheckTime = currentTime
+            
+            -- If no current rocket or it was destroyed
+            if not CurrentRocket or not CurrentRocket.Parent then
+                local rocket = FindRocket()
+                if rocket then
+                    AttachCameraToRocket(rocket)
+                    Rayfield:Notify({
+                        Title = "RPG Control",
+                        Content = "Found new RPG rocket! Control attached.",
+                        Duration = 3,
+                        Image = 0,
+                    })
+                end
+            end
+        end
+        task.wait(0.1)
+    end
+end
+
+RPGFunctions:CreateToggle({
+    Name = "Auto RPG Control",
+    CurrentValue = false,
+    Flag = "RPGAutoControl",
+    Callback = function(Value)
+        if Value then
+            RPGCameraEnabled = true
+            local rocket = FindRocket()
+            if rocket then
+                AttachCameraToRocket(rocket)
+                Rayfield:Notify({
+                    Title = "RPG Control",
+                    Content = "RPG rocket found! Control enabled.",
+                    Duration = 3,
+                    Image = 0,
+                })
+            else
+                Rayfield:Notify({
+                    Title = "RPG Control",
+                    Content = "No rocket found. Will keep searching...",
+                    Duration = 3,
+                    Image = 0,
+                })
+            end
+            -- Start background checking
+            RocketCheckThread = task.spawn(CheckForRocket)
+        else
+            RPGCameraEnabled = false
+            ResetCamera()
+            if RocketCheckThread then
+                task.cancel(RocketCheckThread)
+                RocketCheckThread = nil
+            end
+        end
+    end,
+})
+
+RPGFunctions:CreateButton({
+    Name = "Manual Attach to RPG",
+    Callback = function()
+        local rocket = FindRocket()
+        if rocket then
+            AttachCameraToRocket(rocket)
+            Rayfield:Notify({
+                Title = "RPG Control",
+                Content = "Successfully attached to RPG rocket!",
+                Duration = 3,
+                Image = 0,
+            })
+        else
+            Rayfield:Notify({
+                Title = "RPG Control",
+                Content = "No RPG rocket found!",
+                Duration = 3,
+                Image = 0,
+            })
+        end
+    end,
+})
+
+RPGFunctions:CreateButton({
+    Name = "Reset Camera",
+    Callback = function()
+        ResetCamera()
+        Rayfield:Notify({
+            Title = "RPG Control",
+            Content = "Camera reset to normal view",
+            Duration = 3,
+            Image = 0,
+        })
+    end,
+})
+
+RPGFunctions:CreateSlider({
+    Name = "Rocket Speed",
+    Range = {10, 200},
+    Increment = 5,
+    Suffix = "units",
+    CurrentValue = 50,
+    Flag = "RPGSpeed",
+    Callback = function(Value)
+        if CurrentRocket then
+            local bodyForce = CurrentRocket:FindFirstChild("BodyForce")
+            if bodyForce then
+                if bodyForce.Force.Magnitude > 0 then
+                    bodyForce.Force = bodyForce.Force.Unit * Value
+                end
+            end
+        end
+    end,
+})
