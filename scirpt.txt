@@ -460,7 +460,7 @@ ScriptsTab:CreateButton({
    end,
 })
 
-local RPGFunctions = Window:CreateTab("RPG Control", "sword") -- Using sword icon
+local RPGFunctions = Window:CreateTab("RPG Control", "eye") -- Using sword icon
 
 local RPGCameraEnabled = false
 local CurrentRocket = nil
